@@ -221,7 +221,8 @@ class RiveReactNativeViewManager : SimpleViewManager<RiveReactNativeView>() {
   }
 
   override fun onDropViewInstance(view: RiveReactNativeView) {
-    view.dispose();
+    // android.util.Log.d("RiveDebug", "RiveReactNativeViewManager.onDropViewInstance id=${view.id}")
+    view.dispose()
     super.onDropViewInstance(view)
   }
 
