@@ -731,7 +731,9 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                     initialValue: prop.value,
                     createListener: { [weak self] in
                         prop.addListener { newValue in
-                            self?.eventEmitter?.sendEvent(withName: key, body: newValue)
+                            guard let eventEmitter = self?.eventEmitter,
+                                  eventEmitter.isListenerActive(key) else { return }
+                            eventEmitter.sendEvent(withName: key, body: newValue)
                         }
                     }
                 )
@@ -743,7 +745,9 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                     initialValue: prop.value,
                     createListener: { [weak self] in
                         prop.addListener { newValue in
-                            self?.eventEmitter?.sendEvent(withName: key, body: newValue)
+                            guard let eventEmitter = self?.eventEmitter,
+                                  eventEmitter.isListenerActive(key) else { return }
+                            eventEmitter.sendEvent(withName: key, body: newValue)
                         }
                     }
                 )
@@ -755,7 +759,9 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                     initialValue: prop.value,
                     createListener: { [weak self] in
                         prop.addListener { newValue in
-                            self?.eventEmitter?.sendEvent(withName: key, body: newValue)
+                            guard let eventEmitter = self?.eventEmitter,
+                                  eventEmitter.isListenerActive(key) else { return }
+                            eventEmitter.sendEvent(withName: key, body: newValue)
                         }
                     }
                 )
@@ -767,7 +773,9 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                     initialValue: prop.value.toHexInt(),
                     createListener: { [weak self] in
                         prop.addListener { newValue in
-                            self?.eventEmitter?.sendEvent(withName: key, body: newValue.toHexInt())
+                            guard let eventEmitter = self?.eventEmitter,
+                                  eventEmitter.isListenerActive(key) else { return }
+                            eventEmitter.sendEvent(withName: key, body: newValue.toHexInt())
                         }
                     }
                 )
@@ -779,7 +787,9 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                     initialValue: prop.value,
                     createListener: { [weak self] in
                         prop.addListener { newValue in
-                            self?.eventEmitter?.sendEvent(withName: key, body: newValue)
+                            guard let eventEmitter = self?.eventEmitter,
+                                  eventEmitter.isListenerActive(key) else { return }
+                            eventEmitter.sendEvent(withName: key, body: newValue)
                         }
                     }
                 )
@@ -791,7 +801,9 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                     initialValue: nil,
                     createListener: { [weak self] in
                         prop.addListener {
-                            self?.eventEmitter?.sendEvent(withName: key, body: nil)
+                            guard let eventEmitter = self?.eventEmitter,
+                                  eventEmitter.isListenerActive(key) else { return }
+                            eventEmitter.sendEvent(withName: key, body: nil)
                         }
                     }
                 )
@@ -805,9 +817,13 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
             return
         }
 
-        // Send initial value
+        // Send initial value - defer to next main queue tick to allow JS listener registration to complete
         if let initialValue = registration.initialValue {
-            eventEmitter?.sendEvent(withName: key, body: initialValue)
+            DispatchQueue.main.async { [weak self] in
+                guard let eventEmitter = self?.eventEmitter,
+                      eventEmitter.isListenerActive(key) else { return }
+                eventEmitter.sendEvent(withName: key, body: initialValue)
+            }
         }
 
         // Create and store listener

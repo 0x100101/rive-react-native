@@ -223,7 +223,7 @@ export function useRiveTrigger(
   useEffect(() => {
     const listener = riveRef?.internalNativeEmitter?.();
     if (!listener) return () => {};
-    const reactTag = findNodeHandle(riveRef.viewTag());
+    const reactTag = riveRef.viewTag();
     if (!reactTag) return () => {};
 
     listener.addListener<void>(
@@ -280,7 +280,7 @@ function useRivePropertyListener<T>(
   useEffect(() => {
     const listener = riveRef?.internalNativeEmitter?.();
     if (!listener) return () => {};
-    const reactTag = findNodeHandle(riveRef.viewTag());
+    const reactTag = riveRef.viewTag();
     if (propertyType === PropertyType.Color) {
       listener.addListener<number>(
         path,
