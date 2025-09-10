@@ -817,14 +817,8 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
             return
         }
 
-        // Send initial value - defer to next main queue tick to allow JS listener registration to complete
-        if let initialValue = registration.initialValue {
-            DispatchQueue.main.async { [weak self] in
-                guard let eventEmitter = self?.eventEmitter,
-                      eventEmitter.isListenerActive(key) else { return }
-                eventEmitter.sendEvent(withName: key, body: initialValue)
-            }
-        }
+        // Initial value will be emitted by the property listener when it's first attached
+        // No need for separate initial value emission as it can cause timing conflicts
 
         // Create and store listener
         if let listener = registration.createListener() {
