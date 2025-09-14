@@ -39,6 +39,38 @@ class RiveReactNativeModule(reactContext: ReactApplicationContext) : ReactContex
   }
 
   @ReactMethod
+  fun getCurrentPropertyValue(
+    reactTag: Int,
+    path: String,
+    propertyType: String,
+    promise: Promise
+  ) {
+    try {
+      val uiManager = UIManagerHelper.getUIManager(reactApplicationContext, reactTag)
+      val view = uiManager?.resolveView(reactTag) as? RiveReactNativeView
+
+      if (view == null) {
+        promise.resolve(null)
+        return
+      }
+
+      val propertyTypeEnum = RNPropertyType.mapToRNPropertyType(propertyType)
+      val value = when (propertyTypeEnum) {
+        RNPropertyType.Boolean -> view.getCurrentBooleanPropertyValue(path)
+        RNPropertyType.Color -> view.getCurrentColorPropertyValue(path)
+        RNPropertyType.Number -> view.getCurrentNumberPropertyValue(path)
+        RNPropertyType.String -> view.getCurrentStringPropertyValue(path)
+        RNPropertyType.Enum -> view.getCurrentEnumPropertyValue(path)
+        RNPropertyType.Trigger -> null // Triggers have no current value
+      }
+
+      promise.resolve(value)
+    } catch (e: Exception) {
+      promise.reject("GET_PROPERTY_ERROR", e.message, e)
+    }
+  }
+
+  @ReactMethod
   fun addListener(type: String?) {
     // Keep: Required for RN built in Event Emitter Calls.
   }

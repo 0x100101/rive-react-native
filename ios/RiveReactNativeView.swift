@@ -983,6 +983,29 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
         let path: String
         let propertyType: String
     }
+
+    // MARK: - Get Current Property Values (for initial value fetching)
+
+    func getCurrentBooleanPropertyValue(path: String) -> Bool? {
+        return dataBindingViewModelInstance?.booleanProperty(fromPath: path)?.value
+    }
+
+    func getCurrentColorPropertyValue(path: String) -> Int? {
+        guard let color = dataBindingViewModelInstance?.colorProperty(fromPath: path)?.value else { return nil }
+        return color.toHexInt()
+    }
+
+    func getCurrentNumberPropertyValue(path: String) -> Float? {
+        return dataBindingViewModelInstance?.numberProperty(fromPath: path)?.value
+    }
+
+    func getCurrentStringPropertyValue(path: String) -> String? {
+        return dataBindingViewModelInstance?.stringProperty(fromPath: path)?.value
+    }
+
+    func getCurrentEnumPropertyValue(path: String) -> String? {
+        return dataBindingViewModelInstance?.enumProperty(fromPath: path)?.value
+    }
 }
 
 extension UIColor {

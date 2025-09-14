@@ -1158,6 +1158,52 @@ class RiveReactNativeView(private val context: ThemedReactContext) : FrameLayout
     }
     return result
   }
+
+  // Get Current Property Values (for initial value fetching)
+  fun getCurrentBooleanPropertyValue(path: String): Boolean? {
+    return try {
+      getViewModelInstance()?.getBooleanProperty(path)?.value
+    } catch (ex: RiveException) {
+      handleRiveException(ex)
+      null
+    }
+  }
+
+  fun getCurrentColorPropertyValue(path: String): Int? {
+    return try {
+      getViewModelInstance()?.getColorProperty(path)?.value
+    } catch (ex: RiveException) {
+      handleRiveException(ex)
+      null
+    }
+  }
+
+  fun getCurrentNumberPropertyValue(path: String): Float? {
+    return try {
+      getViewModelInstance()?.getNumberProperty(path)?.value
+    } catch (ex: RiveException) {
+      handleRiveException(ex)
+      null
+    }
+  }
+
+  fun getCurrentStringPropertyValue(path: String): String? {
+    return try {
+      getViewModelInstance()?.getStringProperty(path)?.value
+    } catch (ex: RiveException) {
+      handleRiveException(ex)
+      null
+    }
+  }
+
+  fun getCurrentEnumPropertyValue(path: String): String? {
+    return try {
+      getViewModelInstance()?.getEnumProperty(path)?.value
+    } catch (ex: RiveException) {
+      handleRiveException(ex)
+      null
+    }
+  }
 }
 
 typealias LoadAssetHandler = (source: ReadableMap, asset: FileAsset) -> Unit

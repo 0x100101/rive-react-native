@@ -285,6 +285,8 @@ function useRivePropertyListener<T>(
     const listener = riveRef?.internalNativeEmitter?.();
     if (!listener) return () => {};
     const reactTag = riveRef.viewTag();
+
+    // Set up the listener first
     if (propertyType === PropertyType.Color) {
       listener.addListener<number>(
         path,
@@ -292,25 +294,54 @@ function useRivePropertyListener<T>(
         reactTag,
         listenerCallbackWithColor
       );
-      return () => {
+    } else {
+      listener.addListener<T>(path, propertyType, reactTag, listenerCallback);
+    }
+
+    // AFTER listener is registered, fetch the current value
+    // This is race-condition-free because we pull the value deterministically
+    const fetchInitialValue = async () => {
+      try {
+        const currentValue = await RiveReactNativeModule.getCurrentPropertyValue(
+          reactTag,
+          path,
+          getPropertyTypeString(propertyType)
+        );
+
+        if (currentValue !== null && currentValue !== undefined) {
+          if (propertyType === PropertyType.Color) {
+            setValue(intToRiveRGBA(currentValue as number) as T);
+          } else {
+            setValue(currentValue as T);
+          }
+        }
+      } catch (error) {
+        if (__DEV__) {
+          console.warn(`Failed to fetch initial value for ${path}:`, error);
+        }
+      }
+    };
+
+    // Small delay to ensure native registration is complete
+    setTimeout(fetchInitialValue, 10);
+
+    return () => {
+      if (propertyType === PropertyType.Color) {
         listener.removeListener<number>(
           path,
           propertyType,
           reactTag,
           listenerCallbackWithColor
         );
-      };
-    } else {
-      listener.addListener<T>(path, propertyType, reactTag, listenerCallback);
-      return () => {
+      } else {
         listener.removeListener<T>(
           path,
           propertyType,
           reactTag,
           listenerCallback
         );
-      };
-    }
+      }
+    };
   }, [
     riveRef,
     path,

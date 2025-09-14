@@ -60,7 +60,7 @@ class RiveReactNativeModule: NSObject, RCTBridgeModule {
     
     @objc(getNumberStateAtPath:inputName:path:resolver:rejecter:)
     func getNumberStateAtPath(_ node: NSNumber, inputName: String, path: String, resolver: @escaping RCTPromiseResolveBlock, rejecter: @escaping RCTPromiseRejectBlock) -> Void {
-        
+
         DispatchQueue.main.async {
             guard let bridge = self.bridge,
                   let view = bridge.uiManager.view(forReactTag: node) as? RiveReactNativeView else {
@@ -68,6 +68,41 @@ class RiveReactNativeModule: NSObject, RCTBridgeModule {
                 return
             }
             let value = view.getNumberStateAtPath(inputName: inputName, path: path)
+            resolver(value)
+        }
+    }
+
+    @objc(getCurrentPropertyValue:path:propertyType:resolver:rejecter:)
+    func getCurrentPropertyValue(
+        _ reactTag: NSNumber,
+        path: String,
+        propertyType: String,
+        resolver: @escaping RCTPromiseResolveBlock,
+        rejecter: @escaping RCTPromiseRejectBlock
+    ) {
+        DispatchQueue.main.async {
+            guard let bridge = self.bridge,
+                  let view = bridge.uiManager.view(forReactTag: reactTag) as? RiveReactNativeView else {
+                resolver(nil)
+                return
+            }
+
+            guard let propertyTypeEnum = RNPropertyType.mapToRNPropertyType(value: propertyType) else {
+                rejecter("INVALID_PROPERTY_TYPE", "Invalid property type: \(propertyType)", nil)
+                return
+            }
+
+            let value: Any? = {
+                switch propertyTypeEnum {
+                case .Boolean: return view.getCurrentBooleanPropertyValue(path: path)
+                case .Color: return view.getCurrentColorPropertyValue(path: path)
+                case .Number: return view.getCurrentNumberPropertyValue(path: path)
+                case .String: return view.getCurrentStringPropertyValue(path: path)
+                case .Enum: return view.getCurrentEnumPropertyValue(path: path)
+                case .Trigger: return nil // Triggers have no current value
+                }
+            }()
+
             resolver(value)
         }
     }
