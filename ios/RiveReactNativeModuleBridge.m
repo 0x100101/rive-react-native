@@ -14,5 +14,6 @@ RCT_EXTERN_METHOD(getBooleanState:(nonnull NSNumber *)node inputName:(nonnull NS
 RCT_EXTERN_METHOD(getNumberState:(nonnull NSNumber *)node inputName:(nonnull NSString *)inputName resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(getBooleanStateAtPath:(nonnull NSNumber *)node inputName:(nonnull NSString *)inputName path:(nonnull NSString *)path resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(getNumberStateAtPath:(nonnull NSNumber *)node inputName:(nonnull NSString *)inputName path:(nonnull NSString *)path resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXTERN_METHOD(getCurrentPropertyValue:(nonnull NSNumber *)reactTag path:(nonnull NSString *)path propertyType:(nonnull NSString *)propertyType resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 
 @end
