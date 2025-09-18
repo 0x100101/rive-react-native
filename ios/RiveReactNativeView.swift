@@ -813,11 +813,19 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
     }
 
     func registerPropertyListener(path: String, propertyType: String) {
+        NSLog("[RiveReactNative] registerPropertyListener called - path: %@ type: %@", path, propertyType)
+
         guard let reactTag = self.reactTag,
               let dataBindingInstance = dataBindingViewModelInstance,
-              let propertyTypeEnum = safePropertyType(propertyType) else { return }
+              let propertyTypeEnum = safePropertyType(propertyType) else {
+            NSLog("[RiveReactNative] registerPropertyListener failed - reactTag: %@, dataBinding: %@",
+                  String(describing: self.reactTag),
+                  String(describing: dataBindingViewModelInstance))
+            return
+        }
 
         let key = "\(propertyType):\(path):\(reactTag)"
+        NSLog("[RiveReactNative] Generated key: %@", key)
 
         // Get registration info based on property type
         let registration: PropertyRegistration? = {
