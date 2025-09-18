@@ -183,6 +183,7 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
 
     @objc private func listenerBecameActive(_ notification: Notification) {
         guard let eventName = notification.object as? String else { return }
+        NSLog("[RiveReactNative] Listener became active: %@", eventName)
         DispatchQueue.main.async { [weak self] in
             self?.pendingDelivery.attemptDelivery(for: eventName)
         }
@@ -765,10 +766,29 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
         }
 
         func attemptDelivery(for key: String) {
-            guard let pending = pendingValues[key],
-                  let view = view,
-                  let eventEmitter = view.eventEmitter,
-                  eventEmitter.isListenerActive(key) else { return }
+            NSLog("[RiveReactNative] Attempting delivery for key: %@", key)
+
+            guard let pending = pendingValues[key] else {
+                NSLog("[RiveReactNative] No pending value for key: %@", key)
+                return
+            }
+
+            guard let view = view else {
+                NSLog("[RiveReactNative] View is nil for key: %@", key)
+                return
+            }
+
+            guard let eventEmitter = view.eventEmitter else {
+                NSLog("[RiveReactNative] EventEmitter is nil for key: %@", key)
+                return
+            }
+
+            guard eventEmitter.isListenerActive(key) else {
+                NSLog("[RiveReactNative] Listener not active for key: %@", key)
+                return
+            }
+
+            NSLog("[RiveReactNative] Delivering initial value for key: %@ value: %@", key, String(describing: pending.value))
 
             // Deliver the value on main thread
             DispatchQueue.main.async {
@@ -909,7 +929,10 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
 
         // Queue initial value for delivery when listener is ready
         if let initialValue = registration.initialValue {
+            NSLog("[RiveReactNative] Queueing initial value for key: %@ value: %@", key, String(describing: initialValue))
             pendingDelivery.enqueue(key: key, value: initialValue)
+        } else {
+            NSLog("[RiveReactNative] No initial value to queue for key: %@", key)
         }
 
         // Create and store listener

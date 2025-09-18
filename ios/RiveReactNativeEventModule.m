@@ -33,6 +33,8 @@ RCT_EXPORT_MODULE();
     [_activeListeners addObject:eventName];
     [super addListener:eventName];
 
+    NSLog(@"[RiveReactNative] JS listener added: %@", eventName);
+
     // Notify all views that this listener became active for pending delivery
     [[NSNotificationCenter defaultCenter] postNotificationName:@"RiveListenerDidBecomeActive"
                                                          object:eventName];
