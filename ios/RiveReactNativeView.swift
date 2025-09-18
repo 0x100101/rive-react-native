@@ -14,6 +14,13 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
     private let viewInstanceId = UUID()
     private lazy var pendingDelivery = PendingDeliveryManager(view: self, instanceId: viewInstanceId)
 
+    // MARK: Registration Queueing
+    private struct PendingRegistration {
+        let path: String
+        let propertyType: String
+    }
+    private var pendingRegistrations: [PendingRegistration] = []
+
     // MARK: RiveReactNativeView Properties
     private var resourceFromBundle = true
     private var requiresLocalResourceReconfigure = false
@@ -119,13 +126,6 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
         self.isUserHandlingErrors = false
         super.init(frame: frame)
 
-        // Listen for listener activation notifications
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(listenerBecameActive(_:)),
-            name: NSNotification.Name("RiveListenerDidBecomeActive"),
-            object: nil
-        )
     }
 
     required init?(coder aDecoder: NSCoder) {
@@ -147,7 +147,6 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
         cleanupDataBinding()
         cleanupFileAssetCache()
         pendingDelivery.cleanup()
-        NotificationCenter.default.removeObserver(self, name: NSNotification.Name("RiveListenerDidBecomeActive"), object: nil)
         previousReferencedAssets = nil
         removeReactSubview(riveView)
         riveView?.playerDelegate = nil
@@ -166,6 +165,7 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
             eventEmitter?.removeListener(byName: key)
         }
         propertyListeners.removeAll()
+        pendingRegistrations.removeAll()
         dataBindingViewModelInstance = nil
     }
 
@@ -181,13 +181,6 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
         }
     }
 
-    @objc private func listenerBecameActive(_ notification: Notification) {
-        guard let eventName = notification.object as? String else { return }
-        NSLog("[RiveReactNative] Listener became active: %@", eventName)
-        DispatchQueue.main.async { [weak self] in
-            self?.pendingDelivery.attemptDelivery(for: eventName)
-        }
-    }
 
     override func didSetProps(_ changedProps: [String]!) {
         if (changedProps.contains("url") || changedProps.contains("resourceName") || changedProps.contains("artboardName") || changedProps.contains("animationName") || changedProps.contains("stateMachineName") || changedProps.contains("referencedAssets")) {
@@ -268,6 +261,9 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
             viewModel.riveModel?.stateMachine?.bind(viewModelInstance: instance)
             self.dataBindingViewModelInstance = instance
 
+            // Process any pending registrations now that data binding is available
+            processPendingRegistrations()
+
             // As we can't control whether `configureDataBinding` is called
             // before/after/between `registerPropertyListener` (if it is called again) we
             // re-add the current registered listeners if the instance is not the same
@@ -282,8 +278,8 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
         switch dataBindingConfig {
         case .autoBind(let autoBind):
             if autoBind {
-                viewModel.riveModel?.enableAutoBind { [weak self] instance in
-                    self?.dataBindingViewModelInstance = instance
+                viewModel.riveModel?.enableAutoBind { instance in
+                    bindInstance(instance)
                 }
             } else {
                 viewModel.riveModel?.disableAutoBind()
@@ -766,29 +762,10 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
         }
 
         func attemptDelivery(for key: String) {
-            NSLog("[RiveReactNative] Attempting delivery for key: %@", key)
-
-            guard let pending = pendingValues[key] else {
-                NSLog("[RiveReactNative] No pending value for key: %@", key)
-                return
-            }
-
-            guard let view = view else {
-                NSLog("[RiveReactNative] View is nil for key: %@", key)
-                return
-            }
-
-            guard let eventEmitter = view.eventEmitter else {
-                NSLog("[RiveReactNative] EventEmitter is nil for key: %@", key)
-                return
-            }
-
-            guard eventEmitter.isListenerActive(key) else {
-                NSLog("[RiveReactNative] Listener not active for key: %@", key)
-                return
-            }
-
-            NSLog("[RiveReactNative] Delivering initial value for key: %@ value: %@", key, String(describing: pending.value))
+            guard let pending = pendingValues[key],
+                  let view = view,
+                  let eventEmitter = view.eventEmitter,
+                  eventEmitter.isListenerActive(key) else { return }
 
             // Deliver the value on main thread
             DispatchQueue.main.async {
@@ -813,19 +790,28 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
     }
 
     func registerPropertyListener(path: String, propertyType: String) {
-        NSLog("[RiveReactNative] registerPropertyListener called - path: %@ type: %@", path, propertyType)
+        guard let reactTag = self.reactTag else {
+            return
+        }
 
+        guard dataBindingViewModelInstance != nil else {
+            // Data binding not ready, queue the registration
+            pendingRegistrations.append(PendingRegistration(path: path, propertyType: propertyType))
+            return
+        }
+
+        // Data binding is ready, process immediately
+        processPropertyRegistration(path: path, propertyType: propertyType)
+    }
+
+    private func processPropertyRegistration(path: String, propertyType: String) {
         guard let reactTag = self.reactTag,
               let dataBindingInstance = dataBindingViewModelInstance,
               let propertyTypeEnum = safePropertyType(propertyType) else {
-            NSLog("[RiveReactNative] registerPropertyListener failed - reactTag: %@, dataBinding: %@",
-                  String(describing: self.reactTag),
-                  String(describing: dataBindingViewModelInstance))
             return
         }
 
         let key = "\(propertyType):\(path):\(reactTag)"
-        NSLog("[RiveReactNative] Generated key: %@", key)
 
         // Get registration info based on property type
         let registration: PropertyRegistration? = {
@@ -937,10 +923,7 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
 
         // Queue initial value for delivery when listener is ready
         if let initialValue = registration.initialValue {
-            NSLog("[RiveReactNative] Queueing initial value for key: %@ value: %@", key, String(describing: initialValue))
             pendingDelivery.enqueue(key: key, value: initialValue)
-        } else {
-            NSLog("[RiveReactNative] No initial value to queue for key: %@", key)
         }
 
         // Create and store listener
@@ -955,7 +938,15 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
             storeProperty(key: key, propertyListener: propertyListener)
         }
 
-        // Initial value delivery will be triggered by notification when JS listener becomes active
+        // Attempt to deliver initial value now that listener is registered
+        pendingDelivery.attemptDelivery(for: key)
+    }
+
+    private func processPendingRegistrations() {
+        for registration in pendingRegistrations {
+            processPropertyRegistration(path: registration.path, propertyType: registration.propertyType)
+        }
+        pendingRegistrations.removeAll()
     }
 
     // MARK: - StateMachineDelegate
