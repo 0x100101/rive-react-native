@@ -32,6 +32,10 @@ RCT_EXPORT_MODULE();
 - (void)addListener:(NSString *)eventName {
     [_activeListeners addObject:eventName];
     [super addListener:eventName];
+
+    // Notify all views that this listener became active for pending delivery
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"RiveListenerDidBecomeActive"
+                                                         object:eventName];
 }
 
 // Called by React Native when removeListeners is called from JS

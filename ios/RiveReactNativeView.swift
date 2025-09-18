@@ -10,6 +10,10 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
     private var propertyListeners: [String: PropertyListener] = [:]
     private var dataBindingConfig: DataBindingConfig?
 
+    // MARK: Initial Value Delivery
+    private let viewInstanceId = UUID()
+    private lazy var pendingDelivery = PendingDeliveryManager(view: self, instanceId: viewInstanceId)
+
     // MARK: RiveReactNativeView Properties
     private var resourceFromBundle = true
     private var requiresLocalResourceReconfigure = false
@@ -114,6 +118,14 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
         self.autoplay = false // will be changed by react native
         self.isUserHandlingErrors = false
         super.init(frame: frame)
+
+        // Listen for listener activation notifications
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(listenerBecameActive(_:)),
+            name: NSNotification.Name("RiveListenerDidBecomeActive"),
+            object: nil
+        )
     }
 
     required init?(coder aDecoder: NSCoder) {
@@ -134,6 +146,8 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
     private func cleanupResources() {
         cleanupDataBinding()
         cleanupFileAssetCache()
+        pendingDelivery.cleanup()
+        NotificationCenter.default.removeObserver(self, name: NSNotification.Name("RiveListenerDidBecomeActive"), object: nil)
         previousReferencedAssets = nil
         removeReactSubview(riveView)
         riveView?.playerDelegate = nil
@@ -164,6 +178,13 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
         super.layoutSubviews()
         for view in subviews {
             view.reactSetFrame(self.bounds)
+        }
+    }
+
+    @objc private func listenerBecameActive(_ notification: Notification) {
+        guard let eventName = notification.object as? String else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.pendingDelivery.attemptDelivery(for: eventName)
         }
     }
 
@@ -313,7 +334,9 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
     private func sendRiveLoadedEvent() {
         guard let loadedTag = generateLoadedTag(),
               eventEmitter?.isListenerActive(loadedTag) == true else { return }
-        eventEmitter?.sendEvent(withName: loadedTag, body: nil)
+        DispatchQueue.main.async { [weak self] in
+            self?.eventEmitter?.sendEvent(withName: loadedTag, body: nil)
+        }
     }
 
     private func configureViewModelFromResource() {
@@ -708,6 +731,61 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
         propertyListeners[key] = propertyListener
     }
 
+    private struct PendingInitialValue {
+        let value: Any?
+    }
+
+    private class PendingDeliveryManager {
+        private var pendingValues: [String: PendingInitialValue] = [:]
+        private var pendingOrder: [String] = []  // FIFO order tracking
+        private weak var view: RiveReactNativeView?
+        private let maxPendingValues = 50
+
+        init(view: RiveReactNativeView, instanceId: UUID) {
+            self.view = view
+        }
+
+        func enqueue(key: String, value: Any?) {
+            // Remove if already exists to avoid duplicates
+            if pendingValues[key] != nil {
+                pendingOrder.removeAll { $0 == key }
+            }
+
+            // FIFO eviction when over limit
+            while pendingOrder.count >= maxPendingValues {
+                if let oldestKey = pendingOrder.first {
+                    pendingOrder.removeFirst()
+                    pendingValues.removeValue(forKey: oldestKey)
+                }
+            }
+
+            let pending = PendingInitialValue(value: value)
+            pendingValues[key] = pending
+            pendingOrder.append(key)
+        }
+
+        func attemptDelivery(for key: String) {
+            guard let pending = pendingValues[key],
+                  let view = view,
+                  let eventEmitter = view.eventEmitter,
+                  eventEmitter.isListenerActive(key) else { return }
+
+            // Deliver the value on main thread
+            DispatchQueue.main.async {
+                eventEmitter.sendEvent(withName: key, body: pending.value)
+            }
+
+            // Clean up immediately after delivery
+            pendingValues.removeValue(forKey: key)
+            pendingOrder.removeAll { $0 == key }
+        }
+
+        func cleanup() {
+            pendingValues.removeAll()
+            pendingOrder.removeAll()
+        }
+    }
+
     private struct PropertyRegistration {
         let property: RiveDataBindingViewModel.Instance.Property
         let initialValue: Any?
@@ -733,7 +811,9 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                         prop.addListener { newValue in
                             guard let eventEmitter = self?.eventEmitter,
                                   eventEmitter.isListenerActive(key) else { return }
-                            eventEmitter.sendEvent(withName: key, body: newValue)
+                            DispatchQueue.main.async {
+                                eventEmitter.sendEvent(withName: key, body: newValue)
+                            }
                         }
                     }
                 )
@@ -747,7 +827,9 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                         prop.addListener { newValue in
                             guard let eventEmitter = self?.eventEmitter,
                                   eventEmitter.isListenerActive(key) else { return }
-                            eventEmitter.sendEvent(withName: key, body: newValue)
+                            DispatchQueue.main.async {
+                                eventEmitter.sendEvent(withName: key, body: newValue)
+                            }
                         }
                     }
                 )
@@ -761,7 +843,9 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                         prop.addListener { newValue in
                             guard let eventEmitter = self?.eventEmitter,
                                   eventEmitter.isListenerActive(key) else { return }
-                            eventEmitter.sendEvent(withName: key, body: newValue)
+                            DispatchQueue.main.async {
+                                eventEmitter.sendEvent(withName: key, body: newValue)
+                            }
                         }
                     }
                 )
@@ -775,7 +859,9 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                         prop.addListener { newValue in
                             guard let eventEmitter = self?.eventEmitter,
                                   eventEmitter.isListenerActive(key) else { return }
-                            eventEmitter.sendEvent(withName: key, body: newValue.toHexInt())
+                            DispatchQueue.main.async {
+                                eventEmitter.sendEvent(withName: key, body: newValue.toHexInt())
+                            }
                         }
                     }
                 )
@@ -789,7 +875,9 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                         prop.addListener { newValue in
                             guard let eventEmitter = self?.eventEmitter,
                                   eventEmitter.isListenerActive(key) else { return }
-                            eventEmitter.sendEvent(withName: key, body: newValue)
+                            DispatchQueue.main.async {
+                                eventEmitter.sendEvent(withName: key, body: newValue)
+                            }
                         }
                     }
                 )
@@ -803,7 +891,9 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                         prop.addListener {
                             guard let eventEmitter = self?.eventEmitter,
                                   eventEmitter.isListenerActive(key) else { return }
-                            eventEmitter.sendEvent(withName: key, body: nil)
+                            DispatchQueue.main.async {
+                                eventEmitter.sendEvent(withName: key, body: nil)
+                            }
                         }
                     }
                 )
@@ -817,8 +907,10 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
             return
         }
 
-        // Initial value will be emitted by the property listener when it's first attached
-        // No need for separate initial value emission as it can cause timing conflicts
+        // Queue initial value for delivery when listener is ready
+        if let initialValue = registration.initialValue {
+            pendingDelivery.enqueue(key: key, value: initialValue)
+        }
 
         // Create and store listener
         if let listener = registration.createListener() {
@@ -831,6 +923,8 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
             )
             storeProperty(key: key, propertyListener: propertyListener)
         }
+
+        // Initial value delivery will be triggered by notification when JS listener becomes active
     }
 
     // MARK: - StateMachineDelegate
