@@ -100,11 +100,15 @@ export class RiveNativeEventEmitter {
           storedCallback(value);
         });
       });
-      UIManager.dispatchViewManagerCommand(
-        reactTag,
-        'registerPropertyListener', // Name of the native command
-        [path, getPropertyTypeString(propertyType)]
-      );
+      // Defer iOS registration to ensure JavaScript listener registration completes first
+      // This prevents race condition where iOS emits events before JS is ready to receive them
+      setTimeout(() => {
+        UIManager.dispatchViewManagerCommand(
+          reactTag,
+          'registerPropertyListener', // Name of the native command
+          [path, getPropertyTypeString(propertyType)]
+        );
+      }, 0);
       this.nativeSubscriptions[key] = subscription;
     }
   }
@@ -223,7 +227,7 @@ export function useRiveTrigger(
   useEffect(() => {
     const listener = riveRef?.internalNativeEmitter?.();
     if (!listener) return () => {};
-    const reactTag = findNodeHandle(riveRef.viewTag());
+    const reactTag = riveRef.viewTag();
     if (!reactTag) return () => {};
 
     listener.addListener<void>(
@@ -280,7 +284,7 @@ function useRivePropertyListener<T>(
   useEffect(() => {
     const listener = riveRef?.internalNativeEmitter?.();
     if (!listener) return () => {};
-    const reactTag = findNodeHandle(riveRef.viewTag());
+    const reactTag = riveRef.viewTag();
     if (propertyType === PropertyType.Color) {
       listener.addListener<number>(
         path,
