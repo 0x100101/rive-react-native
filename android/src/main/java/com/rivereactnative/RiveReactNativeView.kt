@@ -175,19 +175,29 @@ class RiveReactNativeView(private val context: ThemedReactContext) : FrameLayout
     addView(riveAnimationView)
   }
 
+  /**
+   * Force immediate teardown of animations, audio, and resources.
+   */
   fun dispose() {
+    // android.util.Log.d("RiveDebug", "RiveReactNativeView.dispose(): performing immediate teardown")
+    // Mark for detach-time cleanup if needed
     willDispose = true
+    // Immediately stop animations and audio
+    riveAnimationView?.stop()
+    // Cancel any coroutines or tasks
+    scope.cancel()
+    // Dispose loaded assets and view
+    assetStore?.dispose()
+    riveAnimationView?.dispose()
+    removeListeners()
+    clearReferences()
   }
 
   override fun onDetachedFromWindow() {
-    if (willDispose) {
-      scope.cancel()
-      assetStore?.dispose()
-      riveAnimationView?.dispose()
-      removeListeners()
-      clearReferences()
-    }
-
+    // android.util.Log.d("RiveDebug", "RiveReactNativeView.onDetachedFromWindow; willDispose=$willDispose")
+    // All teardown now happens in dispose(); clear flag here
+    willDispose = false
+    // android.util.Log.d("RiveDebug", "RiveReactNativeView.onDetachedFromWindow super()")
     super.onDetachedFromWindow()
   }
 
@@ -463,6 +473,7 @@ class RiveReactNativeView(private val context: ThemedReactContext) : FrameLayout
               sendEvent(key, null)
             }
           }
+
           else -> {
             property.valueFlow.collect { value ->
               sendEvent(key, value)

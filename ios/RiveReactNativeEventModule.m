@@ -9,7 +9,6 @@
 #import "RiveReactNativeEventModule.h"
 
 @implementation RiveReactNativeEventModule {
-    BOOL hasListeners;
     NSMutableSet<NSString *> *_activeListeners;
 }
 
