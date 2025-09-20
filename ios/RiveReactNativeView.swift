@@ -376,28 +376,29 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
           handleRiveError(error: createIncorrectRiveURL(url))
           return
         }
-        do {
-          let riveFile = try RiveFile(data: data, loadCdn: true, customAssetLoader: customLoader)
-          let riveModel = RiveModel(riveFile: riveFile)
-          let fit = self.convertFit(self.fit)
-          let alignment = self.convertAlignment(self.alignment)
-          let autoPlay = self.autoplay
-          let artboardName = self.artboardName
-          let updatedViewModel: RiveViewModel
-          if let smName = self.stateMachineName {
-            updatedViewModel = RiveViewModel(riveModel, stateMachineName: smName, fit: fit, alignment: alignment, autoPlay: autoPlay, artboardName: artboardName)
-          } else if let animName = self.animationName {
-            updatedViewModel = RiveViewModel(riveModel, animationName: animName, fit: fit, alignment: alignment, autoPlay: autoPlay, artboardName: artboardName)
-          } else {
-            updatedViewModel = RiveViewModel(riveModel, fit: fit, alignment: alignment, autoPlay: autoPlay, artboardName: artboardName)
-          }
-          updatedViewModel.layoutScaleFactor = self.layoutScaleFactor.doubleValue
+        // Move all Rive object creation to main thread to prevent Metal threading issues
+        DispatchQueue.main.async {
+          do {
+            let riveFile = try RiveFile(data: data, loadCdn: true, customAssetLoader: self.customLoader)
+            let riveModel = RiveModel(riveFile: riveFile)
+            let fit = self.convertFit(self.fit)
+            let alignment = self.convertAlignment(self.alignment)
+            let autoPlay = self.autoplay
+            let artboardName = self.artboardName
+            let updatedViewModel: RiveViewModel
+            if let smName = self.stateMachineName {
+              updatedViewModel = RiveViewModel(riveModel, stateMachineName: smName, fit: fit, alignment: alignment, autoPlay: autoPlay, artboardName: artboardName)
+            } else if let animName = self.animationName {
+              updatedViewModel = RiveViewModel(riveModel, animationName: animName, fit: fit, alignment: alignment, autoPlay: autoPlay, artboardName: artboardName)
+            } else {
+              updatedViewModel = RiveViewModel(riveModel, fit: fit, alignment: alignment, autoPlay: autoPlay, artboardName: artboardName)
+            }
+            updatedViewModel.layoutScaleFactor = self.layoutScaleFactor.doubleValue
 
-          DispatchQueue.main.async {
-              self.createNewView(updatedViewModel: updatedViewModel)
+            self.createNewView(updatedViewModel: updatedViewModel)
+          } catch {
+            self.handleRiveError(error: error as NSError)
           }
-        } catch {
-          self.handleRiveError(error: error as NSError)
         }
       }
 
@@ -517,23 +518,18 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
         if (data.isEmpty == true) {
             return;
         }
-        DispatchQueue.global(qos: .background).async {
+        // Move asset decoding to main thread to prevent Metal rendering conflicts
+        DispatchQueue.main.async {
             switch asset {
             case let imageAsset as RiveImageAsset:
                 let decodedImage = factory.decodeImage(data)
-                DispatchQueue.main.async {
-                    imageAsset.renderImage(decodedImage)
-                }
+                imageAsset.renderImage(decodedImage)
             case let fontAsset as RiveFontAsset:
                 let decodedFont = factory.decodeFont(data)
-                DispatchQueue.main.async {
-                    fontAsset.font(decodedFont)
-                }
+                fontAsset.font(decodedFont)
             case let audioAsset as RiveAudioAsset:
                 let decodedAudio = factory.decodeAudio(data)
-                DispatchQueue.main.async {
-                    audioAsset.audio(decodedAudio)
-                }
+                audioAsset.audio(decodedAudio)
             default:
                 break
             }
