@@ -514,22 +514,31 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
         }
     }
 
+    // Dedicated serial queue for Rive operations to avoid main thread blocking
+    private static let riveQueue = DispatchQueue(label: "com.rive.assets", qos: .userInitiated)
+
     private func processAssetBytes(_ data: Data, asset: RiveFileAsset, factory: RiveFactory) {
         if (data.isEmpty == true) {
             return;
         }
-        // Move asset decoding to main thread to prevent Metal rendering conflicts
-        DispatchQueue.main.async {
+        // Use dedicated serial queue for asset decoding to prevent main thread congestion
+        Self.riveQueue.async {
             switch asset {
             case let imageAsset as RiveImageAsset:
                 let decodedImage = factory.decodeImage(data)
-                imageAsset.renderImage(decodedImage)
+                DispatchQueue.main.async {
+                    imageAsset.renderImage(decodedImage)
+                }
             case let fontAsset as RiveFontAsset:
                 let decodedFont = factory.decodeFont(data)
-                fontAsset.font(decodedFont)
+                DispatchQueue.main.async {
+                    fontAsset.font(decodedFont)
+                }
             case let audioAsset as RiveAudioAsset:
                 let decodedAudio = factory.decodeAudio(data)
-                audioAsset.audio(decodedAudio)
+                DispatchQueue.main.async {
+                    audioAsset.audio(decodedAudio)
+                }
             default:
                 break
             }
