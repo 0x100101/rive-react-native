@@ -305,6 +305,10 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
         riveView?.stateMachineDelegate = nil
         removeReactSubview(riveView)
 
+        // Deregister old model to prevent stale Rive runtime state
+        viewModel?.deregisterView()
+        riveView = nil
+
         // We weren't able to configure data binding before
         if case .pending(let config) = dataBindingConfigState {
           configureDataBinding(viewModel: updatedViewModel, dataBindingConfig: config)
