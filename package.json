@@ -1,6 +1,9 @@
 {
   "name": "rive-react-native",
-  "version": "9.3.4",
+  "version": "9.6.0",
+  "workspaces": [
+    "example"
+  ],
   "description": "Rive React Native",
   "source": "src/index.tsx",
   "main": "lib/commonjs/index.js",
