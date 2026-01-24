@@ -161,3 +161,18 @@ dependencies {
   implementation "androidx.startup:startup-runtime:1.1.1"
   implementation 'com.android.volley:volley:1.2.0'
 }
+
+// Force compatible versions of androidx dependencies
+// rive-android 11.1.0 pulls transitive deps requiring compileSdk 36 / AGP 8.9+
+// This pins them to versions compatible with compileSdk 34 / AGP 8.2.x
+configurations.all {
+  resolutionStrategy {
+    force 'androidx.core:core-ktx:1.12.0'
+    force 'androidx.core:core:1.12.0'
+    force 'androidx.lifecycle:lifecycle-runtime:2.6.1'
+    force 'androidx.lifecycle:lifecycle-runtime-ktx:2.6.1'
+    force 'androidx.lifecycle:lifecycle-viewmodel-ktx:2.6.1'
+    force 'androidx.compose.runtime:runtime:1.5.4'
+    force 'androidx.compose.runtime:runtime-saveable:1.5.4'
+  }
+}
