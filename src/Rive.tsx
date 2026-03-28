@@ -143,6 +143,16 @@ export class RiveNativeEventEmitter {
       }
     }
   }
+
+  dispose() {
+    // Remove all native subscriptions
+    Object.keys(this.nativeSubscriptions).forEach((key) => {
+      this.nativeSubscriptions[key]?.remove();
+    });
+    // Clear all subscriptions and callbacks
+    this.nativeSubscriptions = {};
+    this.callbacks = {};
+  }
 }
 
 export function useRive(): [(node: RiveRef) => void, RiveRef | null] {
@@ -1002,6 +1012,13 @@ const RiveContainer = React.forwardRef<RiveRef, Props>(
         viewTag,
       ]
     );
+
+    // Cleanup RiveNativeEventEmitter on unmount to prevent JS-side accumulation
+    useEffect(() => {
+      return () => {
+        riveRef.current?._propertyEmitter?.dispose();
+      };
+    }, []);
 
     function transformFilesHandledMapping(
       mapping?: FilesHandledMapping

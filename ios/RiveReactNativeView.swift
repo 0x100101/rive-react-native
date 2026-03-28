@@ -1,7 +1,7 @@
 import UIKit
 import RiveRuntime
 
-class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate {
+class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate, RCTInvalidating {
     // MARK: DataBinding Event Properties
     weak var bridge: RCTBridge?
     private var eventEmitter: RiveReactNativeEventModule? {
@@ -12,7 +12,7 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
 
     // MARK: Initial Value Delivery
     private let viewInstanceId = UUID()
-    private lazy var pendingDelivery = PendingDeliveryManager(view: self, instanceId: viewInstanceId)
+    private var pendingDelivery: PendingDeliveryManager!
 
     // MARK: Registration Queueing
     private struct PendingRegistration {
@@ -44,6 +44,12 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
     var cachedRiveFile: RiveFile?
     var previousReferencedAssets: NSDictionary?
     var cachedFileAssets: [String: RiveFileAsset] = [:]
+
+    // Generation counter to guard against stale async callbacks
+    private var loadGeneration: UInt = 0
+
+    // MARK: - Lifecycle Logging
+    private let lifecycleLog: String = "🔥 PATCHED v1"
 
     private var weakCustomLoader: ((RiveFileAsset, Data, RiveFactory) -> Bool) {
         return { [weak self] asset, data, factory in
@@ -132,6 +138,9 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
         self.autoplay = false // will be changed by react native
         self.isUserHandlingErrors = false
         super.init(frame: frame)
+        // Now safe to assign pendingDelivery after super.init
+        self.pendingDelivery = PendingDeliveryManager(view: self, instanceId: viewInstanceId)
+        NSLog("🔥 [RiveReactNativeView] init() PATCHED v2 — tag=%@", self.reactTag ?? -1)
 
     }
 
@@ -144,23 +153,90 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
 
     // MARK: - React Native Helpers
 
+    // RCTInvalidating conformance — called by RCTUIManager._purgeChildren
+    @objc func invalidate() {
+        let retainCount = CFGetRetainCount(self)
+        NSLog("🔥 [RiveReactNativeView] invalidate() PATCHED v2 — tag=%@, isDisposed=%d, retainCount=%d", self.reactTag ?? -1, isDisposed, retainCount)
+        // Only clean up if not already disposed — prevents double-cleanup if called after removeFromSuperview
+        if !isDisposed {
+            cleanupResources()
+        }
+    }
+
     override func removeFromSuperview() {
+        let retainCount = CFGetRetainCount(self)
+        NSLog("🔥 [RiveReactNativeView] removeFromSuperview() PATCHED v2 — tag=%@, retainCount=%d", self.reactTag ?? -1, retainCount)
         cleanupResources()
 
         super.removeFromSuperview()
     }
 
+    private var isDisposed = false
+
     private func cleanupResources() {
+        guard !isDisposed else { return }
+        isDisposed = true
+
+        NSLog("🔥 [RiveReactNativeView] cleanupResources() PATCHED v3 — tag=%@, retainCount=%d", self.reactTag ?? -1, CFGetRetainCount(self))
+
+        // Clean data bindings and file cache first (same as configureViewModelFromResource)
         cleanupDataBinding()
         cleanupFileAssetCache()
-        pendingDelivery.cleanup()
+        pendingDelivery?.cleanup()
+        pendingDelivery = nil
         previousReferencedAssets = nil
-        removeReactSubview(riveView)
+
+        // === Replicate the source-swap cleanup path ===
+        // Key insight: Do NOT call viewModel?.stop() or viewModel?.deregisterView().
+        //
+        // - stop() halts the display link, but removeFromSuperview triggers
+        //   didMoveToWindow(nil) which may re-establish the CADisplayLink cycle.
+        // - deregisterView() nils the ViewModel's strong riveView reference,
+        //   preventing the ViewModel's deinit from releasing the RiveView via ARC.
+        //
+        // Instead, let the natural ARC chain handle cleanup (same as source-swap):
+        //   ViewModel.deinit → releases its strong riveView → RiveView.deinit → stopTimer()
+
+        // 1. Disconnect delegates (same as createNewView step 1-2)
         riveView?.playerDelegate = nil
         riveView?.stateMachineDelegate = nil
-        riveView = nil;
-        viewModel?.deregisterView();
-        viewModel = nil;
+
+        // 2. Remove old RiveView from hierarchy (same as createNewView step 3)
+        removeReactSubview(riveView)
+
+        // 3. Release references — this triggers the ARC chain:
+        //    ViewModel.deinit → releases its strong riveView → RiveView.deinit → stopTimer()
+        //    This is what makes source-swap work.
+        riveView = nil           // release our reference first
+        viewModel = nil          // release ViewModel — triggers deinit → RiveView cleanup
+
+        // Nil all React callback blocks to release bridge references
+        onPlay = nil
+        onPause = nil
+        onStop = nil
+        onLoopEnd = nil
+        onStateChanged = nil
+        onRiveEventReceived = nil
+        onError = nil
+
+        NSLog("🔥 [RiveReactNativeView] cleanupResources() END — tag=%@, retainCount=%d", self.reactTag ?? -1, CFGetRetainCount(self))
+    }
+
+    deinit {
+        let retainCount = CFGetRetainCount(self)
+        NSLog("🔥 [RiveReactNativeView] deinit PATCHED v2 — tag=%@, isDisposed=%d, retainCount=%d", self.reactTag ?? -1, isDisposed, retainCount)
+        // Safety net: nil out strong references if cleanupResources() wasn't called.
+        // Do NOT call UIKit methods or trigger delegate callbacks from deinit.
+        if !isDisposed {
+            riveView?.playerDelegate = nil
+            riveView?.stateMachineDelegate = nil
+            riveView = nil
+            viewModel = nil
+            cachedRiveFile = nil
+            cachedRiveFactory = nil
+            cachedFileAssets.removeAll()
+            dataBindingViewModelInstance = nil
+        }
     }
 
     private func cleanupDataBinding() {
@@ -179,10 +255,10 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
     private func cleanupFileAssetCache() {
         cachedFileAssets.removeAll()
         cachedRiveFactory = nil
-        // Note: We intentionally don't clear cachedRiveFile here to prevent a race condition
-        // where async asset loaders (both custom and CDN) may still be using the factory
-        // tied to the RiveFile. The cachedRiveFile will be replaced on next load or
-        // released when this view is deallocated.
+        // Safe to nil: processAssetBytes() captures cachedRiveFile into a local ref
+        // via withExtendedLifetime before dispatching to background, so in-flight
+        // decodes hold their own strong reference regardless.
+        cachedRiveFile = nil
     }
 
     override func layoutSubviews() {
@@ -379,14 +455,21 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
       }
       resourceName = nil
       resourceFromBundle = false
+
+      // Increment generation to invalidate any in-flight callbacks from previous loads
+      loadGeneration += 1
+      let currentGeneration = loadGeneration
+
       loadUrlAsset(url: url) { [weak self] data in
         guard let self = self else { return }
+        // Guard against stale callbacks from previous source loads or teardown
+        guard self.loadGeneration == currentGeneration else { return }
         guard !data.isEmpty else {
-          handleRiveError(error: createIncorrectRiveURL(url))
+          self.handleRiveError(error: createIncorrectRiveURL(url))
           return
         }
         do {
-          let riveFile = try RiveFile(data: data, loadCdn: true, customAssetLoader: weakCustomLoader)
+          let riveFile = try RiveFile(data: data, loadCdn: true, customAssetLoader: self.weakCustomLoader)
           self.cachedRiveFile = riveFile
           let riveModel = RiveModel(riveFile: riveFile)
           let fit = self.convertFit(self.fit)
