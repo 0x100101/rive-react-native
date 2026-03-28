@@ -944,14 +944,22 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                   let eventEmitter = view.eventEmitter,
                   eventEmitter.isListenerActive(key) else { return }
 
-            // Deliver the value on main thread
-            DispatchQueue.main.async {
-                eventEmitter.sendEvent(withName: key, body: pending.value)
-            }
-
-            // Clean up immediately after delivery
+            // Capture value locally before the async dispatch so the pending
+            // entry can be cleaned up immediately (prevents double-delivery).
+            let value = pending.value
             pendingValues.removeValue(forKey: key)
             pendingOrder.removeAll { $0 == key }
+
+            // Deliver on main thread — re-check isListenerActive and isDisposed
+            // at delivery time, not just at dispatch time. This prevents a
+            // "not a supported event type" crash when cleanupDataBinding() removes
+            // the key from _activeListeners between the dispatch and the execution
+            // of this block (e.g. during page navigation in the old architecture).
+            DispatchQueue.main.async { [weak view] in
+                guard let view = view, !view.isDisposed,
+                      eventEmitter.isListenerActive(key) else { return }
+                eventEmitter.sendEvent(withName: key, body: value)
+            }
         }
 
         func cleanup() {
@@ -1000,9 +1008,11 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                     initialValue: prop.value,
                     createListener: { [weak self] in
                         prop.addListener { newValue in
-                            guard let eventEmitter = self?.eventEmitter,
-                                  eventEmitter.isListenerActive(key) else { return }
-                            DispatchQueue.main.async {
+                            guard let self = self, !self.isDisposed,
+                                  let eventEmitter = self.eventEmitter else { return }
+                            DispatchQueue.main.async { [weak self] in
+                                guard let self = self, !self.isDisposed,
+                                      eventEmitter.isListenerActive(key) else { return }
                                 eventEmitter.sendEvent(withName: key, body: newValue)
                             }
                         }
@@ -1016,9 +1026,11 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                     initialValue: prop.value,
                     createListener: { [weak self] in
                         prop.addListener { newValue in
-                            guard let eventEmitter = self?.eventEmitter,
-                                  eventEmitter.isListenerActive(key) else { return }
-                            DispatchQueue.main.async {
+                            guard let self = self, !self.isDisposed,
+                                  let eventEmitter = self.eventEmitter else { return }
+                            DispatchQueue.main.async { [weak self] in
+                                guard let self = self, !self.isDisposed,
+                                      eventEmitter.isListenerActive(key) else { return }
                                 eventEmitter.sendEvent(withName: key, body: newValue)
                             }
                         }
@@ -1032,9 +1044,11 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                     initialValue: prop.value,
                     createListener: { [weak self] in
                         prop.addListener { newValue in
-                            guard let eventEmitter = self?.eventEmitter,
-                                  eventEmitter.isListenerActive(key) else { return }
-                            DispatchQueue.main.async {
+                            guard let self = self, !self.isDisposed,
+                                  let eventEmitter = self.eventEmitter else { return }
+                            DispatchQueue.main.async { [weak self] in
+                                guard let self = self, !self.isDisposed,
+                                      eventEmitter.isListenerActive(key) else { return }
                                 eventEmitter.sendEvent(withName: key, body: newValue)
                             }
                         }
@@ -1048,9 +1062,11 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                     initialValue: prop.value.toHexInt(),
                     createListener: { [weak self] in
                         prop.addListener { newValue in
-                            guard let eventEmitter = self?.eventEmitter,
-                                  eventEmitter.isListenerActive(key) else { return }
-                            DispatchQueue.main.async {
+                            guard let self = self, !self.isDisposed,
+                                  let eventEmitter = self.eventEmitter else { return }
+                            DispatchQueue.main.async { [weak self] in
+                                guard let self = self, !self.isDisposed,
+                                      eventEmitter.isListenerActive(key) else { return }
                                 eventEmitter.sendEvent(withName: key, body: newValue.toHexInt())
                             }
                         }
@@ -1064,9 +1080,11 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                     initialValue: prop.value,
                     createListener: { [weak self] in
                         prop.addListener { newValue in
-                            guard let eventEmitter = self?.eventEmitter,
-                                  eventEmitter.isListenerActive(key) else { return }
-                            DispatchQueue.main.async {
+                            guard let self = self, !self.isDisposed,
+                                  let eventEmitter = self.eventEmitter else { return }
+                            DispatchQueue.main.async { [weak self] in
+                                guard let self = self, !self.isDisposed,
+                                      eventEmitter.isListenerActive(key) else { return }
                                 eventEmitter.sendEvent(withName: key, body: newValue)
                             }
                         }
@@ -1080,9 +1098,11 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                     initialValue: nil,
                     createListener: { [weak self] in
                         prop.addListener {
-                            guard let eventEmitter = self?.eventEmitter,
-                                  eventEmitter.isListenerActive(key) else { return }
-                            DispatchQueue.main.async {
+                            guard let self = self, !self.isDisposed,
+                                  let eventEmitter = self.eventEmitter else { return }
+                            DispatchQueue.main.async { [weak self] in
+                                guard let self = self, !self.isDisposed,
+                                      eventEmitter.isListenerActive(key) else { return }
                                 eventEmitter.sendEvent(withName: key, body: nil)
                             }
                         }

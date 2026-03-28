@@ -1013,13 +1013,6 @@ const RiveContainer = React.forwardRef<RiveRef, Props>(
       ]
     );
 
-    // Cleanup RiveNativeEventEmitter on unmount to prevent JS-side accumulation
-    useEffect(() => {
-      return () => {
-        riveRef.current?._propertyEmitter?.dispose();
-      };
-    }, []);
-
     function transformFilesHandledMapping(
       mapping?: FilesHandledMapping
     ): FilesHandledMapping | undefined {
