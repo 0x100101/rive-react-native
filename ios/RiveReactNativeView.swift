@@ -392,10 +392,51 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
         riveView?.stateMachineDelegate = nil
         removeReactSubview(riveView)
 
-        // We weren't able to configure data binding before
-        if case .pending(let config) = dataBindingConfigState {
-          configureDataBinding(viewModel: updatedViewModel, dataBindingConfig: config)
+        // Tear down old data binding state before configuring the new ViewModel.
+        //
+        // enableAutoBind (DataBindBy.autobind / AutoBind(true)) stores an @escaping
+        // callback inside the Rive iOS runtime. This creates an internal retain cycle
+        // that prevents ARC from releasing the old ViewModel and its RiveFile/GPU
+        // resources when swapped out — confirmed upstream bug:
+        //   https://github.com/rive-app/rive-ios/issues/427
+        //
+        // Note: BindEmpty() / createInstance() does NOT have this bug, but it also
+        // does not work as a replacement — enableAutoBind wires the instance into the
+        // artboard's per-frame rendering pipeline in a way that createInstance() alone
+        // cannot replicate. So AutoBind(true) is required for data bindings to work.
+        //
+        // Fix strategy: call disableAutoBind() on the OLD ViewModel's riveModel before
+        // the swap. disableAutoBind() is the intended counterpart to enableAutoBind —
+        // it releases the stored @escaping callback, breaking the internal retain cycle
+        // so ARC can deallocate the old ViewModel and its RiveFile once self.viewModel
+        // is replaced below.
+        //
+        // Cleanup sequence:
+        //   1. Remove our property listeners (breaks our own references into the old
+        //      ViewModel's data binding properties).
+        //   2. Nil dataBindingViewModelInstance (drops our strong ref to the old instance).
+        //   3. Call disableAutoBind() on the OLD ViewModel (releases the runtime's
+        //      internal @escaping callback — the key to preventing the leak).
+        //   4. Call configureDataBinding() unconditionally on the NEW ViewModel so it
+        //      gets a fresh, valid dataBindingViewModelInstance via enableAutoBind.
+        //   5. Assign self.viewModel = updatedViewModel — ARC can now release the old
+        //      ViewModel since we've cleaned up all references to it.
+        propertyListeners.forEach { (key, value) in
+            value.property.removeListener(value.listener)
+            eventEmitter?.removeListener(byName: key)
         }
+        propertyListeners.removeAll()
+        pendingRegistrations.removeAll()
+        dataBindingViewModelInstance = nil
+
+        // Step 3: release the old ViewModel's internal enableAutoBind callback.
+        // Must be called BEFORE self.viewModel is replaced so we still have a reference.
+        viewModel?.riveModel?.disableAutoBind()
+
+        // Step 4: configure data binding on the new ViewModel.
+        configureDataBinding(viewModel: updatedViewModel, dataBindingConfig: dataBindingConfig)
+
+        // Step 5: replace ViewModel — old one is now safe to deallocate.
         viewModel = updatedViewModel
         riveView = viewModel!.createRiveView()
         addSubview(riveView!)
