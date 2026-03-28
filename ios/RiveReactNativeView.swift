@@ -250,6 +250,14 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
         propertyListeners.removeAll()
         pendingRegistrations.removeAll()
         dataBindingViewModelInstance = nil
+
+        // Release the enableAutoBind @escaping callback stored inside RiveModel.
+        // Without this, the callback creates a retain cycle (RiveModel → callback →
+        // ViewModel → RiveModel) that prevents ARC from deallocating the ViewModel
+        // and its RiveFile/GPU resources after unmount — the root cause of the
+        // original multi-page memory leak.
+        // See: https://github.com/rive-app/rive-ios/issues/427
+        viewModel?.riveModel?.disableAutoBind()
     }
 
     private func cleanupFileAssetCache() {
