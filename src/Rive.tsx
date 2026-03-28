@@ -143,16 +143,6 @@ export class RiveNativeEventEmitter {
       }
     }
   }
-
-  dispose() {
-    // Remove all native subscriptions
-    Object.keys(this.nativeSubscriptions).forEach((key) => {
-      this.nativeSubscriptions[key]?.remove();
-    });
-    // Clear all subscriptions and callbacks
-    this.nativeSubscriptions = {};
-    this.callbacks = {};
-  }
 }
 
 export function useRive(): [(node: RiveRef) => void, RiveRef | null] {

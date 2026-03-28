@@ -1,7 +1,7 @@
 import UIKit
 import RiveRuntime
 
-class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate, RCTInvalidating {
+class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate {
     // MARK: DataBinding Event Properties
     weak var bridge: RCTBridge?
     private var eventEmitter: RiveReactNativeEventModule? {
@@ -12,7 +12,7 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
 
     // MARK: Initial Value Delivery
     private let viewInstanceId = UUID()
-    private var pendingDelivery: PendingDeliveryManager!
+    private lazy var pendingDelivery = PendingDeliveryManager(view: self, instanceId: viewInstanceId)
 
     // MARK: Registration Queueing
     private struct PendingRegistration {
@@ -44,12 +44,6 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
     var cachedRiveFile: RiveFile?
     var previousReferencedAssets: NSDictionary?
     var cachedFileAssets: [String: RiveFileAsset] = [:]
-
-    // Generation counter to guard against stale async callbacks
-    private var loadGeneration: UInt = 0
-
-    // MARK: - Lifecycle Logging
-    private let lifecycleLog: String = "🔥 PATCHED v1"
 
     private var weakCustomLoader: ((RiveFileAsset, Data, RiveFactory) -> Bool) {
         return { [weak self] asset, data, factory in
@@ -138,9 +132,6 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
         self.autoplay = false // will be changed by react native
         self.isUserHandlingErrors = false
         super.init(frame: frame)
-        // Now safe to assign pendingDelivery after super.init
-        self.pendingDelivery = PendingDeliveryManager(view: self, instanceId: viewInstanceId)
-        NSLog("🔥 [RiveReactNativeView] init() PATCHED v2 — tag=%@", self.reactTag ?? -1)
 
     }
 
@@ -153,90 +144,23 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
 
     // MARK: - React Native Helpers
 
-    // RCTInvalidating conformance — called by RCTUIManager._purgeChildren
-    @objc func invalidate() {
-        let retainCount = CFGetRetainCount(self)
-        NSLog("🔥 [RiveReactNativeView] invalidate() PATCHED v2 — tag=%@, isDisposed=%d, retainCount=%d", self.reactTag ?? -1, isDisposed, retainCount)
-        // Only clean up if not already disposed — prevents double-cleanup if called after removeFromSuperview
-        if !isDisposed {
-            cleanupResources()
-        }
-    }
-
     override func removeFromSuperview() {
-        let retainCount = CFGetRetainCount(self)
-        NSLog("🔥 [RiveReactNativeView] removeFromSuperview() PATCHED v2 — tag=%@, retainCount=%d", self.reactTag ?? -1, retainCount)
         cleanupResources()
 
         super.removeFromSuperview()
     }
 
-    private var isDisposed = false
-
     private func cleanupResources() {
-        guard !isDisposed else { return }
-        isDisposed = true
-
-        NSLog("🔥 [RiveReactNativeView] cleanupResources() PATCHED v3 — tag=%@, retainCount=%d", self.reactTag ?? -1, CFGetRetainCount(self))
-
-        // Clean data bindings and file cache first (same as configureViewModelFromResource)
         cleanupDataBinding()
         cleanupFileAssetCache()
-        pendingDelivery?.cleanup()
-        pendingDelivery = nil
+        pendingDelivery.cleanup()
         previousReferencedAssets = nil
-
-        // === Replicate the source-swap cleanup path ===
-        // Key insight: Do NOT call viewModel?.stop() or viewModel?.deregisterView().
-        //
-        // - stop() halts the display link, but removeFromSuperview triggers
-        //   didMoveToWindow(nil) which may re-establish the CADisplayLink cycle.
-        // - deregisterView() nils the ViewModel's strong riveView reference,
-        //   preventing the ViewModel's deinit from releasing the RiveView via ARC.
-        //
-        // Instead, let the natural ARC chain handle cleanup (same as source-swap):
-        //   ViewModel.deinit → releases its strong riveView → RiveView.deinit → stopTimer()
-
-        // 1. Disconnect delegates (same as createNewView step 1-2)
+        removeReactSubview(riveView)
         riveView?.playerDelegate = nil
         riveView?.stateMachineDelegate = nil
-
-        // 2. Remove old RiveView from hierarchy (same as createNewView step 3)
-        removeReactSubview(riveView)
-
-        // 3. Release references — this triggers the ARC chain:
-        //    ViewModel.deinit → releases its strong riveView → RiveView.deinit → stopTimer()
-        //    This is what makes source-swap work.
-        riveView = nil           // release our reference first
-        viewModel = nil          // release ViewModel — triggers deinit → RiveView cleanup
-
-        // Nil all React callback blocks to release bridge references
-        onPlay = nil
-        onPause = nil
-        onStop = nil
-        onLoopEnd = nil
-        onStateChanged = nil
-        onRiveEventReceived = nil
-        onError = nil
-
-        NSLog("🔥 [RiveReactNativeView] cleanupResources() END — tag=%@, retainCount=%d", self.reactTag ?? -1, CFGetRetainCount(self))
-    }
-
-    deinit {
-        let retainCount = CFGetRetainCount(self)
-        NSLog("🔥 [RiveReactNativeView] deinit PATCHED v2 — tag=%@, isDisposed=%d, retainCount=%d", self.reactTag ?? -1, isDisposed, retainCount)
-        // Safety net: nil out strong references if cleanupResources() wasn't called.
-        // Do NOT call UIKit methods or trigger delegate callbacks from deinit.
-        if !isDisposed {
-            riveView?.playerDelegate = nil
-            riveView?.stateMachineDelegate = nil
-            riveView = nil
-            viewModel = nil
-            cachedRiveFile = nil
-            cachedRiveFactory = nil
-            cachedFileAssets.removeAll()
-            dataBindingViewModelInstance = nil
-        }
+        riveView = nil;
+        viewModel?.deregisterView();
+        viewModel = nil;
     }
 
     private func cleanupDataBinding() {
@@ -250,23 +174,16 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
         propertyListeners.removeAll()
         pendingRegistrations.removeAll()
         dataBindingViewModelInstance = nil
-
-        // Release the enableAutoBind @escaping callback stored inside RiveModel.
-        // Without this, the callback creates a retain cycle (RiveModel → callback →
-        // ViewModel → RiveModel) that prevents ARC from deallocating the ViewModel
-        // and its RiveFile/GPU resources after unmount — the root cause of the
-        // original multi-page memory leak.
-        // See: https://github.com/rive-app/rive-ios/issues/427
         viewModel?.riveModel?.disableAutoBind()
     }
 
     private func cleanupFileAssetCache() {
         cachedFileAssets.removeAll()
         cachedRiveFactory = nil
-        // Safe to nil: processAssetBytes() captures cachedRiveFile into a local ref
-        // via withExtendedLifetime before dispatching to background, so in-flight
-        // decodes hold their own strong reference regardless.
-        cachedRiveFile = nil
+        // Note: We intentionally don't clear cachedRiveFile here to prevent a race condition
+        // where async asset loaders (both custom and CDN) may still be using the factory
+        // tied to the RiveFile. The cachedRiveFile will be replaced on next load or
+        // released when this view is deallocated.
     }
 
     override func layoutSubviews() {
@@ -400,51 +317,11 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
         riveView?.stateMachineDelegate = nil
         removeReactSubview(riveView)
 
-        // Tear down old data binding state before configuring the new ViewModel.
-        //
-        // enableAutoBind (DataBindBy.autobind / AutoBind(true)) stores an @escaping
-        // callback inside the Rive iOS runtime. This creates an internal retain cycle
-        // that prevents ARC from releasing the old ViewModel and its RiveFile/GPU
-        // resources when swapped out — confirmed upstream bug:
-        //   https://github.com/rive-app/rive-ios/issues/427
-        //
-        // Note: BindEmpty() / createInstance() does NOT have this bug, but it also
-        // does not work as a replacement — enableAutoBind wires the instance into the
-        // artboard's per-frame rendering pipeline in a way that createInstance() alone
-        // cannot replicate. So AutoBind(true) is required for data bindings to work.
-        //
-        // Fix strategy: call disableAutoBind() on the OLD ViewModel's riveModel before
-        // the swap. disableAutoBind() is the intended counterpart to enableAutoBind —
-        // it releases the stored @escaping callback, breaking the internal retain cycle
-        // so ARC can deallocate the old ViewModel and its RiveFile once self.viewModel
-        // is replaced below.
-        //
-        // Cleanup sequence:
-        //   1. Remove our property listeners (breaks our own references into the old
-        //      ViewModel's data binding properties).
-        //   2. Nil dataBindingViewModelInstance (drops our strong ref to the old instance).
-        //   3. Call disableAutoBind() on the OLD ViewModel (releases the runtime's
-        //      internal @escaping callback — the key to preventing the leak).
-        //   4. Call configureDataBinding() unconditionally on the NEW ViewModel so it
-        //      gets a fresh, valid dataBindingViewModelInstance via enableAutoBind.
-        //   5. Assign self.viewModel = updatedViewModel — ARC can now release the old
-        //      ViewModel since we've cleaned up all references to it.
-        propertyListeners.forEach { (key, value) in
-            value.property.removeListener(value.listener)
-            eventEmitter?.removeListener(byName: key)
+        // We weren't able to configure data binding before
+        if case .pending(let config) = dataBindingConfigState {
+          configureDataBinding(viewModel: updatedViewModel, dataBindingConfig: config)
         }
-        propertyListeners.removeAll()
-        pendingRegistrations.removeAll()
-        dataBindingViewModelInstance = nil
-
-        // Step 3: release the old ViewModel's internal enableAutoBind callback.
-        // Must be called BEFORE self.viewModel is replaced so we still have a reference.
         viewModel?.riveModel?.disableAutoBind()
-
-        // Step 4: configure data binding on the new ViewModel.
-        configureDataBinding(viewModel: updatedViewModel, dataBindingConfig: dataBindingConfig)
-
-        // Step 5: replace ViewModel — old one is now safe to deallocate.
         viewModel = updatedViewModel
         riveView = viewModel!.createRiveView()
         addSubview(riveView!)
@@ -504,21 +381,14 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
       }
       resourceName = nil
       resourceFromBundle = false
-
-      // Increment generation to invalidate any in-flight callbacks from previous loads
-      loadGeneration += 1
-      let currentGeneration = loadGeneration
-
       loadUrlAsset(url: url) { [weak self] data in
         guard let self = self else { return }
-        // Guard against stale callbacks from previous source loads or teardown
-        guard self.loadGeneration == currentGeneration else { return }
         guard !data.isEmpty else {
-          self.handleRiveError(error: createIncorrectRiveURL(url))
+          handleRiveError(error: createIncorrectRiveURL(url))
           return
         }
         do {
-          let riveFile = try RiveFile(data: data, loadCdn: true, customAssetLoader: self.weakCustomLoader)
+          let riveFile = try RiveFile(data: data, loadCdn: true, customAssetLoader: weakCustomLoader)
           self.cachedRiveFile = riveFile
           let riveModel = RiveModel(riveFile: riveFile)
           let fit = self.convertFit(self.fit)
@@ -944,22 +814,14 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                   let eventEmitter = view.eventEmitter,
                   eventEmitter.isListenerActive(key) else { return }
 
-            // Capture value locally before the async dispatch so the pending
-            // entry can be cleaned up immediately (prevents double-delivery).
-            let value = pending.value
+            // Deliver the value on main thread
+            DispatchQueue.main.async {
+                eventEmitter.sendEvent(withName: key, body: pending.value)
+            }
+
+            // Clean up immediately after delivery
             pendingValues.removeValue(forKey: key)
             pendingOrder.removeAll { $0 == key }
-
-            // Deliver on main thread — re-check isListenerActive and isDisposed
-            // at delivery time, not just at dispatch time. This prevents a
-            // "not a supported event type" crash when cleanupDataBinding() removes
-            // the key from _activeListeners between the dispatch and the execution
-            // of this block (e.g. during page navigation in the old architecture).
-            DispatchQueue.main.async { [weak view] in
-                guard let view = view, !view.isDisposed,
-                      eventEmitter.isListenerActive(key) else { return }
-                eventEmitter.sendEvent(withName: key, body: value)
-            }
         }
 
         func cleanup() {
@@ -1008,11 +870,9 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                     initialValue: prop.value,
                     createListener: { [weak self] in
                         prop.addListener { newValue in
-                            guard let self = self, !self.isDisposed,
-                                  let eventEmitter = self.eventEmitter else { return }
-                            DispatchQueue.main.async { [weak self] in
-                                guard let self = self, !self.isDisposed,
-                                      eventEmitter.isListenerActive(key) else { return }
+                            guard let eventEmitter = self?.eventEmitter,
+                                  eventEmitter.isListenerActive(key) else { return }
+                            DispatchQueue.main.async {
                                 eventEmitter.sendEvent(withName: key, body: newValue)
                             }
                         }
@@ -1026,11 +886,9 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                     initialValue: prop.value,
                     createListener: { [weak self] in
                         prop.addListener { newValue in
-                            guard let self = self, !self.isDisposed,
-                                  let eventEmitter = self.eventEmitter else { return }
-                            DispatchQueue.main.async { [weak self] in
-                                guard let self = self, !self.isDisposed,
-                                      eventEmitter.isListenerActive(key) else { return }
+                            guard let eventEmitter = self?.eventEmitter,
+                                  eventEmitter.isListenerActive(key) else { return }
+                            DispatchQueue.main.async {
                                 eventEmitter.sendEvent(withName: key, body: newValue)
                             }
                         }
@@ -1044,11 +902,9 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                     initialValue: prop.value,
                     createListener: { [weak self] in
                         prop.addListener { newValue in
-                            guard let self = self, !self.isDisposed,
-                                  let eventEmitter = self.eventEmitter else { return }
-                            DispatchQueue.main.async { [weak self] in
-                                guard let self = self, !self.isDisposed,
-                                      eventEmitter.isListenerActive(key) else { return }
+                            guard let eventEmitter = self?.eventEmitter,
+                                  eventEmitter.isListenerActive(key) else { return }
+                            DispatchQueue.main.async {
                                 eventEmitter.sendEvent(withName: key, body: newValue)
                             }
                         }
@@ -1062,11 +918,9 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                     initialValue: prop.value.toHexInt(),
                     createListener: { [weak self] in
                         prop.addListener { newValue in
-                            guard let self = self, !self.isDisposed,
-                                  let eventEmitter = self.eventEmitter else { return }
-                            DispatchQueue.main.async { [weak self] in
-                                guard let self = self, !self.isDisposed,
-                                      eventEmitter.isListenerActive(key) else { return }
+                            guard let eventEmitter = self?.eventEmitter,
+                                  eventEmitter.isListenerActive(key) else { return }
+                            DispatchQueue.main.async {
                                 eventEmitter.sendEvent(withName: key, body: newValue.toHexInt())
                             }
                         }
@@ -1080,11 +934,9 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                     initialValue: prop.value,
                     createListener: { [weak self] in
                         prop.addListener { newValue in
-                            guard let self = self, !self.isDisposed,
-                                  let eventEmitter = self.eventEmitter else { return }
-                            DispatchQueue.main.async { [weak self] in
-                                guard let self = self, !self.isDisposed,
-                                      eventEmitter.isListenerActive(key) else { return }
+                            guard let eventEmitter = self?.eventEmitter,
+                                  eventEmitter.isListenerActive(key) else { return }
+                            DispatchQueue.main.async {
                                 eventEmitter.sendEvent(withName: key, body: newValue)
                             }
                         }
@@ -1098,11 +950,9 @@ class RiveReactNativeView: RCTView, RivePlayerDelegate, RiveStateMachineDelegate
                     initialValue: nil,
                     createListener: { [weak self] in
                         prop.addListener {
-                            guard let self = self, !self.isDisposed,
-                                  let eventEmitter = self.eventEmitter else { return }
-                            DispatchQueue.main.async { [weak self] in
-                                guard let self = self, !self.isDisposed,
-                                      eventEmitter.isListenerActive(key) else { return }
+                            guard let eventEmitter = self?.eventEmitter,
+                                  eventEmitter.isListenerActive(key) else { return }
+                            DispatchQueue.main.async {
                                 eventEmitter.sendEvent(withName: key, body: nil)
                             }
                         }
